@@ -1,0 +1,136 @@
+#!/bin/bash
+
+function usage {
+    echo ""
+    echo "Usage:"
+    echo "$0 [-a ALL] [-p OPTION] DESTINATION [-v VERBOSE]"
+    echo ""
+    echo "DESCRIPTION"
+    echo "      cloudinfo       Collect all the cloud information to the specified location."
+    echo "      logtar          Compress the logs and configurations to a .tar file."
+    echo ""
+    echo "OPTIONS"
+    echo "      -a, --all       Collect all the log files and scripts. Collect the latest scripts otherwise."
+    echo "      -p, --path      Specify the destination path to save the collected logs and configurations."
+    echo "      -v, --verbose   Verbose output for during the collection."
+    echo "      -h, --help      Print the help menu."
+}
+
+DATELOG=($(date +%m-%d-%Y))
+DESTDIR=`pwd`
+VERBOSE=0
+ALL=0
+RUNCMD=""
+VERSION=""
+
+VERSION_CHECKER () # check eucalyptus version
+{ 
+    VERSION=($(cat /etc/eucalyptus/eucalyptus-version))
+
+    if [ $VERSION == "" ]; then
+        echo "No Eucalyptus installation found!"
+        exit 1
+    fi
+
+    if [[ $VERSION == "2.0.3" ]]; then
+        echo "Continuing with Eucalyptus 2.0.3 version"
+
+        IS_SOURCED=($(euca-describe-clusters))
+        if [[ ${IS_SOURCED[*]} == "Environment variable EC2_ACCESS_KEY is unset." ]]; then
+            echo "Unable to find credentials.  Please source the admin eucarc file."
+            exit 1
+        fi
+    fi
+
+    if [[ $VERSION == "3.1.0" ]]; then
+        echo "Continuing with Eucalyptus 3.1.0"
+
+        IS_SOURCED=($(euca-describe-clouds))
+        if [[ ${IS_SOURCED[*]} == "Unable to find credentials." ]]; then
+            echo "Unable to find credentials.  Please source the admin eucarc file."
+            exit 1
+        fi
+    fi
+}
+
+LOGDIR()
+{
+    if [ -f $DESTDIR/eucalog.$DATELOG.log ]; then
+        rm $DESTDIR/eucalog.$DATELOG.log
+    fi
+
+    if [ -f $DESTDIR/eucalog.$DATELOG.tar ]; then
+        rm $DESTDIR/eucalog.$DATELOG.tar
+    fi
+
+    LOGFILE=$DESTDIR/eucalog.$DATELOG.log
+    TARFILE=$DESTDIR/eucalog.$DATALOG.tar
+}
+
+LOGSPC () 
+{
+    echo ""
+}
+
+DIST ()
+{
+    sed -n -e 's/ *(.*)//g' -e '1p' /etc/issue | awk -F"\\" '{print $1}'
+}
+
+EUCADESC () 
+{
+    VERSION_CHECKER
+    LOGSPC
+    echo "/etc/eucalyptus/eucalyptus.conf:" 
+    cat /etc/eucalyptus/eucalyptus.conf | grep -v "#" | sed '/^$/d' 
+    LOGSPC      
+    #euca-describe-services 
+    #LOGSPC
+    euca-describe-availability-zones verbose 
+    LOGSPC
+    #euca-describe-nodes verbose 
+    #LOGSPC
+    euca-describe-properties 
+    LOGSPC
+}
+
+function cloudinfo()
+{
+    LOGDIR
+
+    if [ $VERBOSE -eq 1 ]; then
+        echo "Available distribution: $DIST"
+        echo "Collecting Eucalyptus configurations."
+    fi
+    
+    DIST >> $LOGFILE
+    LOGSPC
+    EUCADESC >> $LOGFILE
+}
+
+function logtar()
+{
+    if [ $VERBOSE -eq 1 ]; then
+        echo "Generating tar..."
+    fi
+
+    LOGS=($(ls /var/log/eucalyptus/ | grep -v [0-9]))
+    cd /var/log/eucalyptus
+    tar cf - ${LOGS[*]} > $DESTDIR/eucalog.$DATELOG.tar
+    tar --append --file=$DESTDIR/eucalog.$DATELOG.tar -C $DESTDIR/ eucalog.$DATELOG.log
+    #tar -cf $DESTDIR/eucalog.$DATELOG.tar -C $DESTDIR/ eucalog.$DATELOG.log
+}
+
+while [ "$1" != "" ]; do
+    case "$1" in
+        -h | --help) usage;;
+        -v | --verbose) VERBOSE=1;;
+        -a | --all) ALL=1;;
+        -p | --path) DESTDIR="$2"; shift;;
+        cloudinfo) cloudinfo;;
+        logtar) logtar;;
+        *) echo "$1: command not found."; usage;;
+    esac
+    shift
+done
+
